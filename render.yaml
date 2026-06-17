@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: conversational-memory-system
+    env: docker
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /health

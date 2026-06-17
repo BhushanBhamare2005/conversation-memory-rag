@@ -1,0 +1,50 @@
+{
+  "build_summary": {
+    "messages": 42,
+    "topics": 3,
+    "topic_checkpoints": 3,
+    "memory_checkpoints": 1,
+    "persona_traits": 14
+  },
+  "topic_checkpoint_example": {
+    "topic_id": 1,
+    "message_range": "1-14",
+    "summary": "The conversation opens with greetings, then shifts into a relocation and career-planning discussion.",
+    "key_facts": [
+      "User 1 says they are moving to Portland, Oregon.",
+      "User 1 says they are pursuing culinary dreams.",
+      "User 2 says they are originally from Portland."
+    ],
+    "entities": ["Portland", "Oregon", "Powell", "Books"],
+    "keywords": ["portland", "moving", "dreams", "culinary", "city"]
+  },
+  "persona_example": {
+    "speaker": "User 1",
+    "habits": [
+      {
+        "value": "enjoys exercise",
+        "confidence": 0.89,
+        "evidence": ["I'm a big fan of punk music myself, and I like to run and do yoga in my spare time."]
+      }
+    ],
+    "goals": [
+      {
+        "value": "career aspiration",
+        "confidence": 0.92,
+        "evidence": ["I'm going to be pursuing my culinary dreams there."]
+      }
+    ]
+  },
+  "chat_response_example": {
+    "answer": "The user appears goal-oriented, socially curious, and willing to share personal context. Evidence suggests interests in study, music, cooking, and relocation planning.",
+    "supporting_evidence": [
+      "I'm a fulltime student studying radiology at a local college and I also play in a band that my parents don't know about.",
+      "I'm going to be pursuing my culinary dreams there."
+    ],
+    "retrieval_scores": {
+      "topic_1": 0.84,
+      "raw_2": 0.79,
+      "checkpoint_1": 0.76
+    }
+  }
+}
