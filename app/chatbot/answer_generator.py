@@ -12,11 +12,7 @@ class AnswerGenerator:
         sources: Sequence[str],
     ) -> Dict[str, Any]:
         key_points = self._persona_summary_points(persona_facts, evidence)
-        answer = self._format_answer(
-            "The user appears to be ambitious, creative, and goal-oriented.",
-            "Key Characteristics:",
-            key_points,
-        )
+        answer = "The user appears to be ambitious, creative, and goal-oriented."
         return self._package(answer, evidence, sources, persona_facts, base_confidence=0.9)
 
     def generate_habits_answer(
@@ -26,11 +22,7 @@ class AnswerGenerator:
         sources: Sequence[str],
     ) -> Dict[str, Any]:
         key_points = self._habit_points(habits, evidence)
-        answer = self._format_answer(
-            "The user appears to have these habits:",
-            "Habits:",
-            key_points,
-        )
+        answer = "The user appears to have these habits."
         return self._package(answer, evidence, sources, habits, base_confidence=0.86)
 
     def generate_goals_answer(
@@ -40,11 +32,7 @@ class AnswerGenerator:
         sources: Sequence[str],
     ) -> Dict[str, Any]:
         key_points = self._goal_points(goals, evidence)
-        answer = self._format_answer(
-            "The user's goals appear to center on:",
-            "Goals:",
-            key_points,
-        )
+        answer = "The user's goals appear to center on the available evidence."
         return self._package(answer, evidence, sources, goals, base_confidence=0.87)
 
     def generate_communication_style_answer(
@@ -54,11 +42,7 @@ class AnswerGenerator:
         sources: Sequence[str],
     ) -> Dict[str, Any]:
         key_points = self._style_points(style_data, evidence)
-        answer = self._format_answer(
-            "The user communicates in a friendly and engaging manner.",
-            "Communication Style:",
-            key_points,
-        )
+        answer = "The user communicates in a friendly and engaging manner."
         return self._package(answer, evidence, sources, style_data, base_confidence=0.88)
 
     def generate_topic_summary_answer(
@@ -68,11 +52,7 @@ class AnswerGenerator:
         sources: Sequence[str],
     ) -> Dict[str, Any]:
         key_points = self._topic_points(topics, evidence)
-        answer = self._format_answer(
-            "The main topics discussed were:",
-            "Topics:",
-            key_points,
-        )
+        answer = "The main topics discussed were the retrieved themes."
         return self._package(answer, evidence, sources, topics, base_confidence=0.84)
 
     def generate_interests_answer(
@@ -82,11 +62,7 @@ class AnswerGenerator:
         sources: Sequence[str],
     ) -> Dict[str, Any]:
         key_points = self._interest_points(interests, evidence)
-        answer = self._format_answer(
-            "The user seems interested in:",
-            "Interests:",
-            key_points,
-        )
+        answer = "The user seems interested in the retrieved themes."
         return self._package(answer, evidence, sources, interests, base_confidence=0.85)
 
     def generate_recent_events_answer(
@@ -96,11 +72,7 @@ class AnswerGenerator:
         sources: Sequence[str],
     ) -> Dict[str, Any]:
         key_points = self._recent_points(events, evidence)
-        answer = self._format_answer(
-            "Recently, the conversation focused on:",
-            "Recent Events:",
-            key_points,
-        )
+        answer = "Recently, the conversation focused on the latest retrieved events."
         return self._package(answer, evidence, sources, events, base_confidence=0.83)
 
     def _package(
@@ -115,7 +87,7 @@ class AnswerGenerator:
         clean_sources = self._dedupe([self._clean_text(item) for item in sources])
         confidence = self._confidence(base_confidence, clean_evidence, clean_sources, scored_items)
         return {
-            "answer": answer,
+            "answer": self._format_report(answer, clean_evidence, clean_sources, confidence),
             "evidence": clean_evidence[:5],
             "sources": clean_sources[:5],
             "confidence": confidence,
@@ -262,10 +234,23 @@ class AnswerGenerator:
                     points.append(label)
         return self._dedupe(points)[:5] or [fallback]
 
-    def _format_answer(self, intro: str, heading: str, bullets: Sequence[str]) -> str:
-        clean_bullets = self._dedupe(list(bullets))
-        body = "\n".join(f"- {item}" for item in clean_bullets[:5])
-        return f"{intro}\n\n{heading}\n{body}"
+    def _format_report(self, answer: str, evidence: Sequence[str], sources: Sequence[str], confidence: float) -> str:
+        evidence_lines = [f"- {item}" for item in evidence[:5]] or ["- None available"]
+        source_lines = [f"- {item}" for item in sources[:5]] or ["- None available"]
+        return "\n".join(
+            [
+                "Answer",
+                answer,
+                "",
+                "Evidence",
+                *evidence_lines,
+                "",
+                "Sources",
+                *source_lines,
+                "",
+                f"Confidence: {confidence:.4f}",
+            ]
+        )
 
     def _extract_fact_value(self, item: Dict[str, Any]) -> str:
         metadata = item.get("metadata", {}) if isinstance(item, dict) else {}
@@ -275,7 +260,7 @@ class AnswerGenerator:
     def _clean_text(self, text: Any) -> str:
         cleaned = re.sub(r"\s+", " ", str(text or "")).strip().strip("\"'")
         cleaned = re.sub(r"\s*\(0\.\d+\)$", "", cleaned).strip()
-        if cleaned.lower().startswith(("personal_facts:", "goals:", "interests:", "communication_style:", "retrieved_chunks:", "retrieved_topics:")):
+        if cleaned.lower().startswith(("personal_facts:", "goals:", "interests:", "habits:", "communication_style:", "retrieved_chunks:", "retrieved_topics:", "answer:", "evidence:", "sources:", "confidence:")):
             return ""
         return cleaned
 

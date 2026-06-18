@@ -14,7 +14,8 @@ class ConversationalMemoryChatbot:
 
     def ask(self, query: str, top_k: int = 5) -> Dict[str, Any]:
         retrieval = self.retriever.retrieve(query, top_k=top_k)
-        intent = self._detect_intent(query, retrieval.intent)
+        normalized_query = self._normalize_query(query)
+        intent = self._detect_intent(normalized_query, retrieval.intent)
 
         if intent == "persona_summary":
             result = self.answer_generator.generate_persona_summary(
@@ -23,10 +24,11 @@ class ConversationalMemoryChatbot:
                 sources=self._collect_sources(retrieval.retrieved_persona_facts),
             )
         elif intent == "persona_habits":
+            habits = self._filter_persona_items(retrieval.retrieved_persona_facts, {"habit", "interest", "recurring_behavior", "personal_fact"})
             result = self.answer_generator.generate_habits_answer(
-                habits=self._filter_persona_items(retrieval.retrieved_persona_facts, {"habit", "interest", "recurring_behavior", "personal_fact"}),
-                evidence=self._collect_evidence(self._filter_persona_items(retrieval.retrieved_persona_facts, {"habit", "interest", "recurring_behavior", "personal_fact"})),
-                sources=self._collect_sources(self._filter_persona_items(retrieval.retrieved_persona_facts, {"habit", "interest", "recurring_behavior", "personal_fact"})),
+                habits=habits,
+                evidence=self._collect_evidence(habits),
+                sources=self._collect_sources(habits),
             )
         elif intent == "persona_interests":
             interests = self._filter_persona_items(retrieval.retrieved_persona_facts, {"interest"})
@@ -72,9 +74,9 @@ class ConversationalMemoryChatbot:
         return result
 
     def _detect_intent(self, query: str, fallback: str) -> str:
-        lowered = query.lower()
+        lowered = self._normalize_query(query)
         rules = [
-            ("persona_summary", ["what kind of person", "who is this user", "what are they like", "describe the user", "tell me about this user"]),
+            ("persona_summary", ["what kind of person", "kind of person is this user", "who is this user", "what are they like", "describe the user", "tell me about this user", "persona summary"]),
             ("persona_habits", ["what are their habits", "habits", "routine", "usually", "often", "always", "tend to"]),
             ("persona_interests", ["what interests", "interests", "hobbies", "enjoy", "like doing", "like to"]),
             ("persona_goals", ["what are their goals", "goals", "want to", "future", "dream", "plan"]),
@@ -87,6 +89,7 @@ class ConversationalMemoryChatbot:
                 return intent
         fallback_map = {
             "persona": "persona_summary",
+            "general": "persona_summary",
             "style": "communication_style",
             "goal": "persona_goals",
             "checkpoint": "recent_events",
@@ -94,11 +97,18 @@ class ConversationalMemoryChatbot:
         }
         return fallback_map.get(fallback, "persona_summary")
 
+    def _normalize_query(self, query: str) -> str:
+        text = str(query or "")
+        text = text.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
+        text = re.sub(r"[^\w\s?']+", " ", text)
+        text = re.sub(r"\s+", " ", text).strip().strip('"').strip("'")
+        return text.lower()
+
     def _filter_persona_items(self, items: List[Dict[str, Any]], categories: set[str]) -> List[Dict[str, Any]]:
         filtered = []
         for item in items:
             metadata = item.get("metadata", {}) if isinstance(item, dict) else {}
-            category = str(metadata.get("category") or item.get("category") or "").lower()
+            category = self._normalize_category(metadata.get("category") or item.get("category") or "")
             if category in categories:
                 filtered.append(item)
         return filtered
@@ -107,13 +117,15 @@ class ConversationalMemoryChatbot:
         evidence: List[str] = []
         for item in items:
             metadata = item.get("metadata", {}) if isinstance(item, dict) else {}
-            for quote in metadata.get("evidence", []) or item.get("evidence", []) or []:
+            quotes = metadata.get("evidence", []) or item.get("evidence", []) or []
+            for quote in quotes:
                 text = self._clean_text(quote)
                 if text:
                     evidence.append(text)
-            value = self._clean_text(metadata.get("value") or item.get("value") or item.get("content") or "")
-            if value:
-                evidence.append(value)
+            if not quotes:
+                value = self._clean_text(metadata.get("value") or item.get("value") or item.get("content") or "")
+                if value:
+                    evidence.append(value)
         return self._dedupe(evidence)
 
     def _collect_style_evidence(self, chunks: List[Dict[str, Any]], persona_items: List[Dict[str, Any]]) -> List[str]:
@@ -190,11 +202,27 @@ class ConversationalMemoryChatbot:
 
     def _clean_text(self, text: Any) -> str:
         cleaned = re.sub(r"\s+", " ", str(text or "")).strip().strip("\"'")
-        cleaned = re.sub(r"^(?:personal_facts?|goals?|interests?|communication_style|retrieved_chunks?|retrieved_topics?|similarity_scores?)\s*:\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"^(?:personal_facts?|goals?|interests?|habits?|communication_style|retrieved_chunks?|retrieved_topics?|similarity_scores?)\s*:\s*", "", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r"\s*\(0\.\d+\)$", "", cleaned).strip()
-        if cleaned.lower().startswith(("personal_facts:", "goals:", "interests:", "communication_style:", "retrieved_chunks:", "retrieved_topics:")):
+        if cleaned.lower().startswith(("personal_facts:", "goals:", "interests:", "habits:", "communication_style:", "retrieved_chunks:", "retrieved_topics:")):
             return ""
         return cleaned
+
+    def _normalize_category(self, category: Any) -> str:
+        mapping = {
+            "personal_facts": "personal_fact",
+            "personal_fact": "personal_fact",
+            "goals": "goal",
+            "goal": "goal",
+            "interests": "interest",
+            "interest": "interest",
+            "habits": "habit",
+            "habit": "habit",
+            "communication_style": "communication_style",
+            "recurring_behaviors": "recurring_behavior",
+            "recurring_behavior": "recurring_behavior",
+        }
+        return mapping.get(str(category or "").lower(), str(category or "").lower())
 
     def _dedupe(self, items: Iterable[str]) -> List[str]:
         ordered: List[str] = []

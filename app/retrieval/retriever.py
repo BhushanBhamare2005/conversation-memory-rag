@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from collections import Counter
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterable, List
 
 from app.models import RetrievedDocument, RetrievalResult
 from app.retrieval.faiss_store import FaissMemoryStore
@@ -43,9 +42,9 @@ class MemoryRetriever:
             intent=intent,
             evidence=evidence,
             sources=sources,
-            retrieved_topics=[self._structure_topic(hit) for hit in topic_hits],
-            retrieved_chunks=[self._structure_chunk(hit) for hit in raw_hits],
-            retrieved_persona_facts=[self._structure_persona_fact(hit) for hit in persona_hits],
+            retrieved_topics=[self._structured_topic(hit) for hit in topic_hits],
+            retrieved_chunks=[self._structured_chunk(hit) for hit in raw_hits],
+            retrieved_persona_facts=[self._structured_persona_fact(hit) for hit in persona_hits],
             similarity_scores=ranked_hits,
         )
 
@@ -70,7 +69,8 @@ class MemoryRetriever:
     def _normalize_query(self, query: str) -> str:
         text = str(query or "")
         text = text.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
-        text = re.sub(r"\s+", " ", text).strip()
+        text = re.sub(r"[^\w\s?']+", " ", text)
+        text = re.sub(r"\s+", " ", text).strip().strip('"').strip("'")
         return text.lower()
 
     def _rank_hits(
@@ -151,8 +151,11 @@ class MemoryRetriever:
 
     def _structured_persona_fact(self, hit: RetrievedDocument) -> Dict[str, Any]:
         metadata = hit.metadata or {}
-        evidence = [self._clean_text(item) for item in metadata.get("evidence", []) if self._clean_text(item)]
-        source_message_ids = self._dedupe([str(item) for item in metadata.get("source_message_ids", []) if item])
+        evidence = self._dedupe(metadata.get("evidence", []))
+        source_message_ids = self._dedupe(
+            [str(item) for item in metadata.get("source_message_ids", []) if item]
+            + [str(item) for item in metadata.get("message_ids", []) if item]
+        )
         confidence = float(metadata.get("confidence", hit.score) or hit.score or 0.0)
         return {
             "category": self._normalize_category(metadata.get("category") or hit.doc_type),
@@ -164,11 +167,9 @@ class MemoryRetriever:
 
     def _structured_topic(self, hit: RetrievedDocument) -> Dict[str, Any]:
         metadata = hit.metadata or {}
-        evidence = [self._clean_text(item) for item in metadata.get("evidence", []) if self._clean_text(item)]
-        key_facts = [self._clean_text(item) for item in metadata.get("key_facts", []) if self._clean_text(item)]
-        source_message_ids = self._dedupe(
-            [str(item) for item in [metadata.get("start_message"), metadata.get("end_message")] if item]
-        )
+        evidence = self._dedupe(metadata.get("evidence", []))
+        key_facts = self._dedupe(metadata.get("key_facts", []))
+        source_message_ids = self._dedupe([str(item) for item in [metadata.get("start_message"), metadata.get("end_message")] if item])
         return {
             "topic_id": hit.doc_id,
             "title": self._clean_text(metadata.get("title") or hit.doc_id),
@@ -246,13 +247,22 @@ class MemoryRetriever:
     def _compose_evidence(self, context: Dict[str, Any]) -> List[str]:
         evidence: List[str] = []
         for hit in context["topics"][:3]:
-            evidence.append(self._simplify_topic_hit(hit))
+            topic_evidence = hit.metadata.get("evidence", []) or []
+            evidence.extend(topic_evidence)
+            if not topic_evidence:
+                evidence.append(self._simplify_topic_hit(hit))
         for hit in context["persona"][:4]:
-            evidence.append(self._simplify_persona_hit(hit))
+            persona_evidence = hit.metadata.get("evidence", []) or []
+            evidence.extend(persona_evidence)
+            if not persona_evidence:
+                evidence.append(self._simplify_persona_hit(hit))
         for hit in context["chunks"][:3]:
             evidence.append(self._simplify_chunk_hit(hit))
         for hit in context["checkpoints"][:2]:
-            evidence.append(self._simplify_checkpoint_hit(hit))
+            checkpoint_evidence = (hit.metadata.get("important_facts", []) or []) + (hit.metadata.get("important_events", []) or [])
+            evidence.extend(checkpoint_evidence)
+            if not checkpoint_evidence:
+                evidence.append(self._simplify_checkpoint_hit(hit))
         profile_hits = context["profile"]
         if profile_hits:
             profile_summary = profile_hits[0].metadata.get("summary", profile_hits[0].content)
@@ -269,9 +279,9 @@ class MemoryRetriever:
                     "id": hit.doc_id,
                     "title": hit.metadata.get("title", hit.doc_id),
                     "summary": hit.metadata.get("summary", hit.content),
-                    "evidence": hit.metadata.get("evidence", []),
-                    "key_facts": hit.metadata.get("key_facts", []),
-                    "source_message_ids": [hit.metadata.get("start_message"), hit.metadata.get("end_message")],
+                    "evidence": self._dedupe(hit.metadata.get("evidence", [])),
+                    "key_facts": self._dedupe(hit.metadata.get("key_facts", [])),
+                    "source_message_ids": self._dedupe([hit.metadata.get("start_message"), hit.metadata.get("end_message")]),
                     "similarity": round(hit.score, 4),
                     "intent": intent,
                 }
@@ -283,7 +293,7 @@ class MemoryRetriever:
                     "id": hit.doc_id,
                     "range": hit.metadata.get("range"),
                     "excerpt": hit.content,
-                    "source_message_ids": hit.metadata.get("message_ids", []),
+                    "source_message_ids": self._dedupe(hit.metadata.get("message_ids", [])),
                     "similarity": round(hit.score, 4),
                     "intent": intent,
                 }
@@ -295,9 +305,9 @@ class MemoryRetriever:
                     "id": hit.doc_id,
                     "range": hit.metadata.get("message_range") or hit.metadata.get("range"),
                     "summary": hit.metadata.get("summary", hit.content),
-                    "important_events": hit.metadata.get("important_events", []),
-                    "important_facts": hit.metadata.get("important_facts", []),
-                    "recurring_patterns": hit.metadata.get("recurring_patterns", []),
+                    "important_events": self._dedupe(hit.metadata.get("important_events", [])),
+                    "important_facts": self._dedupe(hit.metadata.get("important_facts", [])),
+                    "recurring_patterns": self._dedupe(hit.metadata.get("recurring_patterns", [])),
                     "similarity": round(hit.score, 4),
                     "intent": intent,
                 }
@@ -307,10 +317,10 @@ class MemoryRetriever:
                 {
                     "layer": "persona_fact",
                     "id": hit.doc_id,
-                    "category": hit.metadata.get("category"),
+                    "category": self._normalize_category(hit.metadata.get("category") or hit.doc_type),
                     "value": hit.metadata.get("value") or hit.content,
-                    "evidence": hit.metadata.get("evidence", []),
-                    "source_message_ids": hit.metadata.get("source_message_ids", []),
+                    "evidence": self._dedupe(hit.metadata.get("evidence", [])),
+                    "source_message_ids": self._dedupe(hit.metadata.get("source_message_ids", [])),
                     "similarity": round(hit.score, 4),
                     "intent": intent,
                 }
@@ -322,9 +332,9 @@ class MemoryRetriever:
                     "id": hit.doc_id,
                     "summary": hit.metadata.get("summary", hit.content),
                     "communication_style": hit.metadata.get("communication_style", {}),
-                    "dominant_themes": hit.metadata.get("dominant_themes", []),
-                    "notable_facts": hit.metadata.get("notable_facts", []),
-                    "source_message_ids": hit.metadata.get("source_message_ids", []),
+                    "dominant_themes": self._dedupe(hit.metadata.get("dominant_themes", [])),
+                    "notable_facts": self._dedupe(hit.metadata.get("notable_facts", [])),
+                    "source_message_ids": self._dedupe(hit.metadata.get("source_message_ids", [])),
                     "similarity": round(hit.score, 4),
                     "intent": intent,
                 }
@@ -361,6 +371,26 @@ class MemoryRetriever:
             bullets.append("Uses conversational language.")
         bullets.append("Maintains dialogue flow.")
         return "Communication characteristics: " + " ".join(bullets)
+
+    def _clean_text(self, text: Any) -> str:
+        cleaned = re.sub(r"\s+", " ", str(text or "")).strip().strip('"').strip("'")
+        cleaned = re.sub(r"^(?:personal_facts?|goals?|interests?|habits?|communication_style|retrieved_chunks?|retrieved_topics?|similarity_scores?)\s*:\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s*\(0\.\d+\)$", "", cleaned).strip()
+        return cleaned
+
+    def _dedupe(self, items: Iterable[Any]) -> List[str]:
+        ordered: List[str] = []
+        seen = set()
+        for item in items:
+            text = self._clean_text(item)
+            if not text:
+                continue
+            lowered = text.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            ordered.append(text)
+        return ordered
 
     def _combine_supporting_phrases(self, phrases: List[str]) -> str:
         cleaned: List[str] = []
